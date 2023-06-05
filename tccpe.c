@@ -21,7 +21,7 @@
 #include "tcc.h"
 
 #define PE_MERGE_DATA 1
-#define PE_PRINT_SECTIONS 0
+#define PE_PRINT_SECTIONS 1
 
 #ifndef _WIN32
 #define stricmp strcasecmp
@@ -29,7 +29,17 @@
 #include <sys/stat.h> /* chmod() */
 #endif
 
-#ifdef TCC_TARGET_X86_64
+#if defined(TCC_TARGET_I386)
+# define ADDR3264 DWORD
+# define PE_IMAGE_REL IMAGE_REL_BASED_HIGHLOW
+# define REL_TYPE_DIRECT R_386_32
+# define R_XXX_THUNKFIX R_386_32
+# define R_XXX_RELATIVE R_386_RELATIVE
+# define R_XXX_FUNCCALL R_386_PC32
+# define IMAGE_FILE_MACHINE 0x014C
+# define RSRC_RELTYPE 7 /* DIR32NB */
+
+#elif defined(TCC_TARGET_X86_64)
 # define ADDR3264 ULONGLONG
 # define PE_IMAGE_REL IMAGE_REL_BASED_DIR64
 # define REL_TYPE_DIRECT R_X86_64_64
@@ -39,7 +49,7 @@
 # define IMAGE_FILE_MACHINE 0x8664
 # define RSRC_RELTYPE 3
 
-#elif defined TCC_TARGET_ARM
+#elif defined(TCC_TARGET_ARM)
 # define ADDR3264 DWORD
 # define PE_IMAGE_REL IMAGE_REL_BASED_HIGHLOW
 # define REL_TYPE_DIRECT R_ARM_ABS32
@@ -47,18 +57,23 @@
 # define R_XXX_RELATIVE R_ARM_RELATIVE
 # define R_XXX_FUNCCALL R_ARM_PC24
 # define R_XXX_FUNCCALL2 R_ARM_ABS32
-# define IMAGE_FILE_MACHINE 0x01C0
+# ifdef TCC_TARGET_ARM_WINCE
+#  define IMAGE_FILE_MACHINE 0x01C0		// WinCE on ARM
+# else
+#  define IMAGE_FILE_MACHINE 0x01C4		// Windows 8.x on ARM
+# endif
 # define RSRC_RELTYPE 7 /* ??? (not tested) */
 
-#elif defined TCC_TARGET_I386
-# define ADDR3264 DWORD
-# define PE_IMAGE_REL IMAGE_REL_BASED_HIGHLOW
-# define REL_TYPE_DIRECT R_386_32
-# define R_XXX_THUNKFIX R_386_32
-# define R_XXX_RELATIVE R_386_RELATIVE
-# define R_XXX_FUNCCALL R_386_PC32
-# define IMAGE_FILE_MACHINE 0x014C
-# define RSRC_RELTYPE 7 /* DIR32NB */
+#elif defined(TCC_TARGET_ARM64)
+# define ADDR3264 ULONGLONG
+# define PE_IMAGE_REL IMAGE_REL_BASED_DIR64
+# define REL_TYPE_DIRECT R_AARCH64_ABS64
+# define R_XXX_THUNKFIX R_AARCH64_ABS32
+# define R_XXX_RELATIVE R_AARCH64_RELATIVE
+# define R_XXX_FUNCCALL R_AARCH64_PC32
+# define R_XXX_FUNCCALL2 R_AARCH64_ABS64
+# define IMAGE_FILE_MACHINE 0xAA64		// Windows 8.x+ on ARM64
+# define RSRC_RELTYPE 3	/* ?? (not tested) */
 
 #endif
 
@@ -541,33 +556,42 @@ static int pe_write(struct pe_info *pe)
     {
     /* IMAGE_FILE_HEADER filehdr */
     IMAGE_FILE_MACHINE, /*WORD    Machine; */
-    0x0003, /*WORD    NumberOfSections; */
+    0x0003,     /*WORD    NumberOfSections; */
     0x00000000, /*DWORD   TimeDateStamp; */
     0x00000000, /*DWORD   PointerToSymbolTable; */
     0x00000000, /*DWORD   NumberOfSymbols; */
-#if defined(TCC_TARGET_X86_64)
-    0x00F0, /*WORD    SizeOfOptionalHeader; */
-    0x022F  /*WORD    Characteristics; */
-#define CHARACTERISTICS_DLL 0x222E
-#elif defined(TCC_TARGET_I386)
-    0x00E0, /*WORD    SizeOfOptionalHeader; */
-    0x030F  /*WORD    Characteristics; */
+#if defined(TCC_TARGET_I386)
+    0x00E0,     /*WORD    SizeOfOptionalHeader; */
+    0x030F      /*WORD    Characteristics; */
 #define CHARACTERISTICS_DLL 0x230E
+#elif defined(TCC_TARGET_X86_64)
+    0x00F0,     /*WORD    SizeOfOptionalHeader; */
+    0x022F      /*WORD    Characteristics; */
+#define CHARACTERISTICS_DLL 0x222E
 #elif defined(TCC_TARGET_ARM)
-    0x00E0, /*WORD    SizeOfOptionalHeader; */
-    0x010F, /*WORD    Characteristics; */
+    0x00E0,     /*WORD    SizeOfOptionalHeader; */
+    0x0122      /*WORD    Characteristics; */
 #define CHARACTERISTICS_DLL 0x230F
+#elif defined(TCC_TARGET_ARM64)
+    ??
+#define CHARACTERISTICS_DLL 0x222E
 #endif
 },{
     /* IMAGE_OPTIONAL_HEADER opthdr */
     /* Standard fields. */
-#ifdef TCC_TARGET_X86_64
-    0x020B, /*WORD    Magic; */
+#if defined(TCC_TARGET_X86_64) || defined(TCC_TARGET_ARM64)
+    0x020B,     /*WORD    Magic; */
 #else
-    0x010B, /*WORD    Magic; */
+    0x010B,     /*WORD    Magic; */
 #endif
-    0x06, /*BYTE    MajorLinkerVersion; */
-    0x00, /*BYTE    MinorLinkerVersion; */
+#if defined(TCC_TARGET_ARM) || defined(TCC_TARGET_ARM64)
+    // Visual Studio 2019 (v14.29)
+    14,		/*BYTE    MajorLinkerVersion; */
+    29,		/*BYTE    MinorLinkerVersion; */
+#else
+    0x06,       /*BYTE    MajorLinkerVersion; */
+    0x00,       /*BYTE    MinorLinkerVersion; */
+#endif
     0x00000000, /*DWORD   SizeOfCode; */
     0x00000000, /*DWORD   SizeOfInitializedData; */
     0x00000000, /*DWORD   SizeOfUninitializedData; */
@@ -577,25 +601,43 @@ static int pe_write(struct pe_info *pe)
     0x00000000, /*DWORD   BaseOfData; */
 #endif
     /* NT additional fields. */
-#if defined(TCC_TARGET_ARM)
-    0x00100000,	    /*DWORD   ImageBase; */
+#if defined(TCC_TARGET_ARM_WINCE)
+    0x00100000,	/*DWORD   ImageBase; */
 #else
-    0x00400000,	    /*DWORD   ImageBase; */
+    0x00400000,	/*DWORD   ImageBase; */
 #endif
     0x00001000, /*DWORD   SectionAlignment; */
     0x00000200, /*DWORD   FileAlignment; */
-    0x0004, /*WORD    MajorOperatingSystemVersion; */
-    0x0000, /*WORD    MinorOperatingSystemVersion; */
-    0x0000, /*WORD    MajorImageVersion; */
-    0x0000, /*WORD    MinorImageVersion; */
-    0x0004, /*WORD    MajorSubsystemVersion; */
-    0x0000, /*WORD    MinorSubsystemVersion; */
+#if defined(TCC_TARGET_ARM)
+    // Windows 8+ (v6.2)
+    0x0006,     /*WORD    MajorOperatingSystemVersion; */
+    0x0002,     /*WORD    MinorOperatingSystemVersion; */
+#else
+    // Windows NT 4.0+ (v4.0)
+    0x0004,     /*WORD    MajorOperatingSystemVersion; */
+    0x0000,     /*WORD    MinorOperatingSystemVersion; */
+#endif
+    0x0000,     /*WORD    MajorImageVersion; */
+    0x0000,     /*WORD    MinorImageVersion; */
+#if defined(TCC_TARGET_ARM)
+    // Windows 8+ (v6.2)
+    0x0006,     /*WORD    MajorOperatingSystemVersion; */
+    0x0002,     /*WORD    MinorOperatingSystemVersion; */
+#else
+    // Windows NT 4.0+ (v4.0)
+    0x0004,     /*WORD    MajorSubsystemVersion; */
+    0x0000,     /*WORD    MinorSubsystemVersion; */
+#endif
     0x00000000, /*DWORD   Win32VersionValue; */
     0x00000000, /*DWORD   SizeOfImage; */
     0x00000200, /*DWORD   SizeOfHeaders; */
     0x00000000, /*DWORD   CheckSum; */
-    0x0002, /*WORD    Subsystem; */
-    0x0000, /*WORD    DllCharacteristics; */
+    0x0002,     /*WORD    Subsystem; */
+#if defined(TCC_TARGET_ARM)
+    0x8140,     /*WORD    DllCharacteristics; */
+#else
+    0x0000,     /*WORD    DllCharacteristics; */
+#endif
     0x00100000, /*DWORD   SizeOfStackReserve; */
     0x00001000, /*DWORD   SizeOfStackCommit; */
     0x00100000, /*DWORD   SizeOfHeapReserve; */
@@ -704,7 +746,7 @@ static int pe_write(struct pe_info *pe)
         }
     }
 
-    //pe_header.filehdr.TimeDateStamp = time(NULL);
+    pe_header.filehdr.TimeDateStamp = time(NULL);
     pe_header.filehdr.NumberOfSections = pe->sec_count;
     pe_header.opthdr.AddressOfEntryPoint = pe->start_addr;
     pe_header.opthdr.SizeOfHeaders = pe->sizeofheaders;
@@ -1581,6 +1623,22 @@ static int get_dllexports(int fd, char **pp)
         if (IMAGE_DIRECTORY_ENTRY_EXPORT >= oh.NumberOfRvaAndSizes)
             goto the_end_0;
         addr = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    } else if (ih.Machine == 0x01C4) {
+        IMAGE_OPTIONAL_HEADER32 oh;
+        sec_hdroffset = opt_hdroffset + sizeof oh;
+        if (!read_mem(fd, opt_hdroffset, &oh, sizeof oh))
+            goto the_end;
+        if (IMAGE_DIRECTORY_ENTRY_EXPORT >= oh.NumberOfRvaAndSizes)
+            goto the_end_0;
+        addr = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    } else if (ih.Machine == 0xaa64) {
+        IMAGE_OPTIONAL_HEADER64 oh;
+        sec_hdroffset = opt_hdroffset + sizeof oh;
+        if (!read_mem(fd, opt_hdroffset, &oh, sizeof oh))
+            goto the_end;
+        if (IMAGE_DIRECTORY_ENTRY_EXPORT >= oh.NumberOfRvaAndSizes)
+            goto the_end_0;
+        addr = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
     } else
         goto the_end;
 
@@ -1944,21 +2002,21 @@ static void pe_set_options(TCCState * s1, struct pe_info *pe)
         /* XXX: check if is correct for arm-pe target */
         pe->imagebase = 0x10000000;
     } else {
-#if defined(TCC_TARGET_ARM)
+#if defined(TCC_TARGET_ARM_WINCE)
         pe->imagebase = 0x00010000;
 #else
         pe->imagebase = 0x00400000;
 #endif
     }
 
-#if defined(TCC_TARGET_ARM)
-    /* we use "console" subsystem by default */
-    pe->subsystem = 9;
+#if defined(TCC_TARGET_ARM_WINCE)
+    pe->subsystem = 9;		// Windows CE GUI
 #else
+    /* we use "console" subsystem by default */
     if (PE_DLL == pe->type || PE_GUI == pe->type)
-        pe->subsystem = 2;
+        pe->subsystem = 2;	// Windows GUI
     else
-        pe->subsystem = 3;
+        pe->subsystem = 3;	// Windows Console
 #endif
     /* Allow override via -Wl,-subsystem=... option */
     if (s1->pe_subsystem != 0)

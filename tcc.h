@@ -228,7 +228,7 @@ extern long double strtold (const char *__nptr, char **__endptr);
 # define ELF_OBJ_ONLY /* create elf .o but native executables */
 #endif
 
-/* No ten-byte long doubles on window and macos except in
+/* No ten-byte long doubles on windows and macos except in
    cross-compilers made by a mingw-GCC */
 #if defined TCC_TARGET_PE \
     || (defined TCC_TARGET_MACHO && defined TCC_TARGET_ARM64) \

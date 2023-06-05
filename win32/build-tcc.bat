@@ -65,6 +65,7 @@ exit /B 0
 :cl
 @echo off
 set CMD=cl
+set EXOBJ=setargv.obj
 :c0
 set ARG=%1
 set ARG=%ARG:.dll=.lib%
@@ -79,6 +80,7 @@ echo on
 
 @rem ------------------------------------------------------
 @rem main program
+@set EXOBJ=
 
 :p1
 if not %T%_==_ goto :p2
@@ -117,7 +119,9 @@ set DEF_GITHASH=-DTCC_GITHASH="""%GITHASH%"""
 @echo on
 
 :config.h
-echo>..\config.h #define TCC_VERSION "%VERSION%"
+echo>  ..\config.h /* Auto-generated file; do not modify! */
+echo>> ..\config.h #define TCC_VERSION "%VERSION%"
+echo>> ..\config.h #define TCC_GITHASH "%GITHASH%"
 echo>> ..\config.h #ifdef TCC_TARGET_X86_64
 echo>> ..\config.h #define TCC_LIBTCC1 "libtcc1-64.a"
 echo>> ..\config.h #else
@@ -135,8 +139,9 @@ for %%f in (*tcc.exe *tcc.dll) do @del %%f
 @if _%LIBTCC_C%_==__ set LIBTCC_C=..\libtcc.c
 %CC% -o libtcc.dll -shared %LIBTCC_C% %D% -DLIBTCC_AS_DLL
 @if errorlevel 1 goto :the_end
-%CC% -o tcc.exe ..\tcc.c libtcc.dll %D% -DONE_SOURCE"=0" %DEF_GITHASH%
-%CC% -o %PX%-tcc.exe ..\tcc.c %DX%
+%CC% -o x-tcc.exe ..\tcc.c %EXOBJ% libtcc.dll %D% -DONE_SOURCE"=0" %DEF_GITHASH%
+%CC% -o %PX%-tcc.exe ..\tcc.c %EXOBJ% %DX%
+@rename x-tcc.exe tcc.exe
 :compiler_done
 @if (%EXES_ONLY%)==(yes) goto :files_done
 
