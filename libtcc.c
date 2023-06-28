@@ -116,7 +116,7 @@ static inline char *config_tccdir_w32(char *path)
      * the installation is one level up. We can test this
      * by looking for the 'include' folder.
      */
-    strncpy(temp, path, sizeof(temp)-1);
+    strncpy(temp, path, sizeof(temp)-9);
     strcat(temp, "/include");
 
     if (_access(temp, 0) != 0) {
@@ -136,7 +136,7 @@ static inline char *config_tccdir_w32(char *path)
 
                 if (_access(try, 0) == 0) {
                         if (p != NULL)
-                                p = '\0';
+                                *p = '\0';
                         strcpy(path, temp);
                         break;
                 }
