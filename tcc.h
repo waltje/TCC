@@ -1310,6 +1310,8 @@ ST_FUNC char *normalize_slashes(char *path);
 #endif
 ST_FUNC DLLReference *tcc_add_dllref(TCCState *s1, const char *dllname, int level);
 ST_FUNC char *tcc_load_text(int fd);
+/* for #pragma once */
+ST_FUNC int normalized_PATHCMP(const char *f1, const char *f2);
 
 /* tcc_parse_args return codes: */
 #define OPT_HELP 1

@@ -48,7 +48,6 @@ static CString cstr_buf;
 static TokenString tokstr_buf;
 static unsigned char isidnum_table[256 - CH_EOF];
 static int pp_debug_tok, pp_debug_symv;
-static int pp_once;
 static int pp_expr;
 static int pp_counter;
 static void tok_print(const char *msg, const int *str);
@@ -1407,7 +1406,7 @@ static int parse_include(TCCState *s1, int do_next, int test)
         }
         pstrcat(buf, sizeof buf, name);
         e = search_cached_include(s1, buf, 0);
-        if (e && (define_find(e->ifndef_macro) || e->once == pp_once)) {
+        if (e && (define_find(e->ifndef_macro) || e->once)) {
             /* no need to parse the include because the 'ifndef macro'
                is defined (or had #pragma once) */
 #ifdef INC_DEBUG
@@ -1609,18 +1608,18 @@ bad_twosharp:
 
 static CachedInclude *search_cached_include(TCCState *s1, const char *filename, int add)
 {
-    const unsigned char *s;
+    const char *s, *basename;
     unsigned int h;
     CachedInclude *e;
-    int i;
+    int c, i, len;
 
+    s = basename = tcc_basename(filename);
     h = TOK_HASH_INIT;
-    s = (unsigned char *) filename;
-    while (*s) {
+    while ((c = (unsigned char)*s) != 0) {
 #ifdef _WIN32
-        h = TOK_HASH_FUNC(h, toup(*s));
+        h = TOK_HASH_FUNC(h, toup(c));
 #else
-        h = TOK_HASH_FUNC(h, *s);
+        h = TOK_HASH_FUNC(h, c);
 #endif
         s++;
     }
@@ -1631,15 +1630,20 @@ static CachedInclude *search_cached_include(TCCState *s1, const char *filename, 
         if (i == 0)
             break;
         e = s1->cached_includes[i - 1];
-        if (0 == PATHCMP(e->filename, filename))
+        if (0 == PATHCMP(filename, e->filename))
+            return e;
+        if (e->once
+            && 0 == PATHCMP(basename, tcc_basename(e->filename))
+            && 0 == normalized_PATHCMP(filename, e->filename)
+            )
             return e;
         i = e->hash_next;
     }
     if (!add)
         return NULL;
 
-    e = tcc_malloc(sizeof(CachedInclude) + strlen(filename));
-    strcpy(e->filename, filename);
+    e = tcc_malloc(sizeof(CachedInclude) + (len = strlen(filename)));
+    memcpy(e->filename, filename, len + 1);
     e->ifndef_macro = e->once = 0;
     dynarray_add(&s1->cached_includes, &s1->nb_cached_includes, e);
     /* add in hash table */
@@ -1683,7 +1687,7 @@ static void pragma_parse(TCCState *s1)
         pp_debug_tok = t, pp_debug_symv = v;
 
     } else if (tok == TOK_once) {
-        search_cached_include(s1, file->filename, 1)->once = pp_once;
+        search_cached_include(s1, file->filename, 1)->once = 1;
 
     } else if (s1->output_type == TCC_OUTPUT_PREPROCESS) {
         /* tcc -E: keep pragmas below unchanged */
@@ -3633,7 +3637,6 @@ ST_FUNC void preprocess_start(TCCState *s1, int filetype)
     pp_expr = 0;
     pp_counter = 0;
     pp_debug_tok = pp_debug_symv = 0;
-    pp_once++;
     s1->pack_stack[0] = 0;
     s1->pack_stack_ptr = s1->pack_stack;
 
