@@ -176,6 +176,13 @@ ST_FUNC void tccelf_end_file(TCCState *s1)
         if (sym->st_shndx == SHN_UNDEF
             && ELFW(ST_BIND)(sym->st_info) == STB_LOCAL)
             sym->st_info = ELFW(ST_INFO)(STB_GLOBAL, ELFW(ST_TYPE)(sym->st_info));
+#ifndef TCC_TARGET_PE
+	/* An ELF relocatable file should have the types of its undefined global symbol set
+	   to STT_NOTYPE or it will confuse binutils bfd */
+        if (s1->output_format == TCC_OUTPUT_FORMAT_ELF && s1->output_type == TCC_OUTPUT_OBJ)
+            if (sym->st_shndx == SHN_UNDEF && ELFW(ST_BIND)(sym->st_info) == STB_GLOBAL)
+                sym->st_info = ELFW(ST_INFO)(STB_GLOBAL, ELFW(ST_TYPE)(STT_NOTYPE));
+#endif
         tr[i] = set_elf_sym(s, sym->st_value, sym->st_size, sym->st_info,
             sym->st_other, sym->st_shndx, (char*)s->link->data + sym->st_name);
     }
@@ -1880,7 +1887,7 @@ static void fill_local_got_entries(TCCState *s1)
 
 /* Bind symbols of executable: resolve undefined symbols from exported symbols
    in shared libraries */
-static void bind_exe_dynsyms(TCCState *s1)
+static void bind_exe_dynsyms(TCCState *s1, int is_PIE)
 {
     const char *name;
     int sym_index, index;
@@ -1895,6 +1902,8 @@ static void bind_exe_dynsyms(TCCState *s1)
             name = (char *) symtab_section->link->data + sym->st_name;
             sym_index = find_elf_sym(s1->dynsymtab_section, name);
             if (sym_index) {
+                if (is_PIE)
+                    continue;
                 esym = &((ElfW(Sym) *)s1->dynsymtab_section->data)[sym_index];
                 type = ELFW(ST_TYPE)(esym->st_info);
                 if ((type == STT_FUNC) || (type == STT_GNU_IFUNC)) {
@@ -1970,9 +1979,9 @@ static void bind_libs_dynsyms(TCCState *s1)
     for_each_elem(symtab_section, 1, sym, ElfW(Sym)) {
         name = (char *)symtab_section->link->data + sym->st_name;
         dynsym_index = find_elf_sym(s1->dynsymtab_section, name);
-        if (sym->st_shndx != SHN_UNDEF
-            && ELFW(ST_BIND)(sym->st_info) != STB_LOCAL) {
-            if (dynsym_index || s1->rdynamic)
+        if (sym->st_shndx != SHN_UNDEF) {
+            if (ELFW(ST_BIND)(sym->st_info) != STB_LOCAL
+                && (dynsym_index || s1->rdynamic))
                 set_elf_sym(s1->dynsym, sym->st_value, sym->st_size,
                             sym->st_info, 0, sym->st_shndx, name);
         } else if (dynsym_index) {
@@ -2495,6 +2504,7 @@ static int tcc_output_elf(TCCState *s1, FILE *f, int phnum, ElfW(Phdr) *phdr,
 #elif defined TCC_TARGET_ARM
     ehdr.e_ident[EI_OSABI] = ELFOSABI_ARM;
 #elif defined TCC_TARGET_RISCV64
+    /* XXX should be configurable */
     ehdr.e_flags = EF_RISCV_FLOAT_ABI_DOUBLE;
 #endif
 
@@ -2797,8 +2807,8 @@ static int elf_output_file(TCCState *s1, const char *filename)
             dynamic->sh_entsize = sizeof(ElfW(Dyn));
 
             got_sym = build_got(s1);
-            if (file_type == TCC_OUTPUT_EXE) {
-                bind_exe_dynsyms(s1);
+            if (file_type & TCC_OUTPUT_EXE) {
+                bind_exe_dynsyms(s1, file_type & TCC_OUTPUT_DYN);
                 if (s1->nb_errors)
                     goto the_end;
             }
@@ -3547,9 +3557,9 @@ static void store_version(TCCState *s1, struct versym_info *v, char *dynstr)
 #endif
 }
 
-/* load a DLL and all referenced DLLs. 'level = 0' means that the DLL
-   is referenced by the user (so it should be added as DT_NEEDED in
-   the generated ELF file) */
+/* load a library / DLL
+   'level = 0' means that the DLL is referenced by the user
+   (so it should be added as DT_NEEDED in the generated ELF file) */
 ST_FUNC int tcc_load_dll(TCCState *s1, int fd, const char *filename, int level)
 {
     ElfW(Ehdr) ehdr;
@@ -3642,6 +3652,14 @@ ST_FUNC int tcc_load_dll(TCCState *s1, int fd, const char *filename, int level)
         }
     }
 
+    /* do not load all referenced libraries
+       (recursive loading can break linking of libraries) */
+    /* following DT_NEEDED is needed for the dynamic loader (libdl.so),
+       but it is no longer needed, when linking a library or a program.
+       When tcc output mode is OUTPUT_MEM,
+       tcc calls dlopen, which handles DT_NEEDED for us */
+
+#if 0
     for(i = 0, dt = dynamic; i < nb_dts; i++, dt++)
         if (dt->d_tag == DT_RPATH)
             tcc_add_library_path(s1, dynstr + dt->d_un.d_val);
@@ -3659,6 +3677,7 @@ ST_FUNC int tcc_load_dll(TCCState *s1, int fd, const char *filename, int level)
             }
         }
     }
+#endif
 
  ret_success:
     ret = 0;
@@ -3861,8 +3880,9 @@ static int ld_add_file_list(TCCState *s1, const char *cmd, int as_needed)
             if (ret)
                 goto lib_parse_error;
         } else {
-            /* TODO: Implement AS_NEEDED support. Ignore it for now */
-            if (!as_needed) {
+            /* TODO: Implement AS_NEEDED support. */
+	    /*       DT_NEEDED is not used any more so ignore as_needed */
+            if (1 || !as_needed) {
                 ret = ld_add_file(s1, filename);
                 if (ret)
                     goto lib_parse_error;

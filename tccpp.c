@@ -98,8 +98,11 @@ static void next_nomacro(void);
 
 ST_FUNC void skip(int c)
 {
-    if (tok != c)
-        tcc_error("'%c' expected (got \"%s\")", c, get_tok_str(tok, &tokc));
+    if (tok != c) {
+        char tmp[40];
+        pstrcpy(tmp, sizeof tmp, get_tok_str(c, &tokc));
+        tcc_error("'%s' expected (got \"%s\")", tmp, get_tok_str(tok, &tokc));
+	}
     next();
 }
 
@@ -1457,7 +1460,10 @@ static int expr_preprocess(TCCState *s1)
     while (tok != TOK_LINEFEED && tok != TOK_EOF) {
         next(); /* do macro subst */
       redo:
-        if (tok == TOK_DEFINED) {
+        if (tok < TOK_IDENT) {
+            if (tok >= TOK_STR && tok <= TOK_CLDOUBLE)
+                tcc_error("invalid constant in preprocessor expression");
+        } else if (tok == TOK_DEFINED) {
             next_nomacro();
             t = tok;
             if (t == '(') 
@@ -1489,7 +1495,7 @@ static int expr_preprocess(TCCState *s1)
                 expect("')'");
             tok = TOK_CINT;
             tokc.i = c;
-        } else if (tok >= TOK_IDENT) {
+        } else {
             /* if undefined macro, replace with zero, check for func-like */
             t = tok;
             tok = TOK_CINT;
