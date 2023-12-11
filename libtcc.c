@@ -1288,9 +1288,14 @@ ST_FUNC int tcc_add_dll(TCCState *s, const char *filename, int flags)
 /* find [cross-]libtcc1.a and tcc helper objects in library path */
 ST_FUNC void tcc_add_support(TCCState *s1, const char *filename)
 {
-    char buf[100];
+    char buf[256];
+#if 1
+    if (CONFIG_TCC_PREFIX[0])
+        filename = strcat(strcpy(buf, CONFIG_TCC_PREFIX), filename);
+#else
     if (CONFIG_TCC_CROSSPREFIX[0])
         filename = strcat(strcpy(buf, CONFIG_TCC_CROSSPREFIX), filename);
+#endif
     if (tcc_add_dll(s1, filename, 0) < 0)
         tcc_error_noabort("%s not found", filename);
 }
