@@ -2,7 +2,6 @@
 releases/*
 win32/cross/*
 win32/native/*
-win32/*.cmd
 *.diff
 *.orig
 
